@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "zangetsu.fortivpn",
+  "name": "FortiVPN",
+  "version": "1.0.0",
+  "author": "Christian Palladini",
+  "license": "MIT",
+  "description": "FortiClient VPN status in the Omarchy bar: connection state, assigned IP, uptime and traffic, with one-click disconnect and a shortcut into the SAML login.",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "FortiVPN",
+    "description": "Watch the FortiClient tunnel, disconnect from the bar, and open the GUI when a fresh SSO login is needed.",
+    "category": "Network",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 5,
+      "hideWhenDisconnected": false,
+      "notifyOnDrop": true,
+      "notifyOnConnect": false,
+      "cliPath": "",
+      "guiCommand": "/opt/forticlient/gui/FortiClient"
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "description": "How often the tunnel is polled. The duration counter ticks between polls, so a slower interval still reads smoothly.",
+        "min": 2,
+        "max": 300,
+        "step": 1,
+        "defaultValue": 5
+      },
+      {
+        "key": "hideWhenDisconnected",
+        "type": "boolean",
+        "label": "Hide the icon while the tunnel is down",
+        "defaultValue": false
+      },
+      {
+        "key": "notifyOnDrop",
+        "type": "boolean",
+        "label": "Notify when the tunnel drops on its own",
+        "description": "A disconnect you asked for stays silent.",
+        "defaultValue": true
+      },
+      {
+        "key": "notifyOnConnect",
+        "type": "boolean",
+        "label": "Notify when the tunnel comes up",
+        "defaultValue": false
+      },
+      {
+        "key": "cliPath",
+        "type": "path",
+        "label": "Path to the fortivpn CLI",
+        "description": "Leave empty to find fortivpn on PATH.",
+        "defaultValue": ""
+      },
+      {
+        "key": "guiCommand",
+        "type": "string",
+        "label": "Command that opens the FortiClient GUI",
+        "description": "Used by Connect, because SAML/SSO login has to happen in the GUI's browser flow.",
+        "defaultValue": "/opt/forticlient/gui/FortiClient"
+      }
+    ]
+  }
+}
