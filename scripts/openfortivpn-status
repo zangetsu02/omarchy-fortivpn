@@ -1,0 +1,52 @@
+#!/bin/bash
+# Reports the state of an openfortivpn systemd unit using the same
+# "Key: value" shape that `fortivpn status` prints, so a single parser in
+# Model.js serves both backends and neither one needs a special case.
+#
+# Usage: openfortivpn-status [unit]
+#   unit defaults to openfortivpn@vpn.service; a bare name gets .service added.
+
+set -uo pipefail
+
+unit="${1:-openfortivpn@vpn}"
+[[ "$unit" == *.service ]] || unit="${unit}.service"
+
+active="$(systemctl is-active "$unit" 2>/dev/null)"
+case "$active" in
+	active)       state="Connected" ;;
+	activating)   state="Connecting" ;;
+	deactivating) state="Disconnected" ;;
+	*)            state="Not Running" ;;
+esac
+
+echo "Status: ${state}"
+[[ "$state" == "Connected" ]] || exit 0
+
+# openfortivpn@work.service -> "work", which is the profile the user named.
+name="${unit#openfortivpn@}"
+name="${name%.service}"
+echo "VPN name: ${name}"
+
+# Whichever ppp device openfortivpn brought up; the number is not stable.
+iface="$(ip -o link show type ppp 2>/dev/null | awk -F': ' 'NR==1 {print $2}')"
+[[ -n "$iface" ]] || exit 0
+
+ip4="$(ip -4 -o addr show dev "$iface" 2>/dev/null | awk 'NR==1 {print $4}' | cut -d/ -f1)"
+[[ -n "$ip4" ]] && echo "IP: ${ip4}"
+
+tx="$(cat "/sys/class/net/${iface}/statistics/tx_bytes" 2>/dev/null)"
+rx="$(cat "/sys/class/net/${iface}/statistics/rx_bytes" 2>/dev/null)"
+[[ -n "$tx" ]] && echo "Sent bytes: ${tx}"
+[[ -n "$rx" ]] && echo "Recv bytes: ${rx}"
+
+# systemd already records when the unit went active, so the tunnel's age comes
+# free rather than needing state of our own. Both clocks are CLOCK_MONOTONIC.
+since="$(systemctl show -p ActiveEnterTimestampMonotonic --value "$unit" 2>/dev/null)"
+if [[ -n "$since" && "$since" != "0" ]]; then
+	now="$(awk '{printf "%d", $1 * 1000000}' /proc/uptime)"
+	secs=$(( (now - since) / 1000000 ))
+	if (( secs >= 0 )); then
+		printf 'Duration: %02d:%02d:%02d\n' \
+			$(( secs / 3600 )) $(( secs % 3600 / 60 )) $(( secs % 60 ))
+	fi
+fi
