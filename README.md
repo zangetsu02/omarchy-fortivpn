@@ -60,7 +60,35 @@ FortiClient's naming is not self-evident, and `Model.js` maps it:
 | `Not Running` | Disconnesso | The normal idle state |
 | `Disconnected` | Disconnesso | Only flashes by during teardown |
 
-## Setting up the openfortivpn backend
+## Installing on a machine
+
+```bash
+# 1. The widget itself. Omarchy follows the symlink, so the checkout stays
+#    wherever you keep your work and edits apply live.
+git clone https://github.com/zangetsu02/omarchy-fortivpn ~/Workspaces/omarchy-fortivpn
+ln -s ~/Workspaces/omarchy-fortivpn ~/.config/omarchy/plugins/zangetsu.fortivpn
+
+# 2. Add {"id": "zangetsu.fortivpn"} to bar.layout in ~/.config/omarchy/shell.json
+
+# 3. For the openfortivpn backend, the system side in one step:
+sudo pacman -S openfortivpn
+sudo ~/Workspaces/omarchy-fortivpn/scripts/setup-openfortivpn work vpn.example.com 10443
+```
+
+[`scripts/setup-openfortivpn`](scripts/setup-openfortivpn) writes the profile,
+the systemd drop-in and a polkit rule scoped to that one unit, then prints the
+`shell.json` snippet to paste. It is safe to re-run.
+
+It also decides for itself whether a CA bundle is needed: if the gateway
+serves a complete chain it writes none, and if it does not, it fetches the
+intermediate the certificate itself names, refuses to proceed unless that
+completes the chain against the system roots, and only then installs a bundle.
+This matters because openfortivpn's own suggestion in that situation is to pin
+the fingerprint with `trusted-cert`, which breaks at every renewal.
+
+Skipping the script and doing it by hand means the four steps below.
+
+## The openfortivpn backend by hand
 
 Everything here is machine-specific and lives outside this repo.
 

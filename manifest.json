@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "zangetsu.fortivpn",
   "name": "FortiVPN",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "author": "Christian Palladini",
   "license": "MIT",
   "description": "Fortinet VPN status in the Omarchy bar: connection state, assigned IP, uptime and traffic, with connect and disconnect from the panel. Drives either FortiClient or openfortivpn.",
