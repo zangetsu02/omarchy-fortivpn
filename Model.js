@@ -19,7 +19,10 @@ function defaultStatus() {
     sentBytes: -1,
     recvBytes: -1,
     duration: "",
-    durationSec: -1
+    durationSec: -1,
+    // Why a tunnel cannot come up, when the backend knows. Empty means either
+    // all is well or the backend has nothing to say.
+    error: ""
   }
 }
 
@@ -89,6 +92,8 @@ function parseStatus(raw) {
     } else if (key === "duration") {
       status.duration = value
       status.durationSec = durationToSeconds(value)
+    } else if (key === "error") {
+      status.error = value
     }
   }
   return status

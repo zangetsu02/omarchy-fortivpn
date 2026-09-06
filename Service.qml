@@ -106,7 +106,10 @@ Item {
 
   function checkAvailability() {
     if (unit !== "" && !unitProcess.running) {
-      unitProcess.command = ["systemctl", "cat", qualifiedUnit()]
+      // Not `systemctl cat`: systemd resolves any instance of the packaged
+      // template, so that succeeds even for a profile nobody ever created.
+      // The script checks the config the unit will actually read.
+      unitProcess.command = ["bash", root.statusScript, root.qualifiedUnit(), "--check"]
       unitProcess.running = true
     } else {
       _checkedUnit = true
@@ -147,7 +150,10 @@ Item {
     recvBytes = parsed.recvBytes
     durationSec = parsed.durationSec
     _tickOffset = 0
-    lastError = ""
+    // A backend that knows why the tunnel is down says so here, which is the
+    // difference between a click that seems to do nothing and one that explains
+    // itself.
+    lastError = parsed.error || ""
     announceTransition(parsed.state)
   }
 
@@ -198,7 +204,12 @@ Item {
   // waits there for the browser to come back with a session. Starting the unit
   // without --no-block would hang until the whole SSO round trip finished.
   function connectViaOpenfortivpn() {
-    Quickshell.execDetached(["systemctl", "start", "--no-block", root.qualifiedUnit()])
+    // A unit that hit its start limit refuses every further start until the
+    // failure is cleared, and a few unsuccessful attempts are exactly what
+    // leaves it there. Clearing first makes the button work again by itself.
+    Quickshell.execDetached(["bash", "-c",
+      "systemctl reset-failed " + root.qualifiedUnit() + " 2>/dev/null; " +
+      "systemctl start --no-block " + root.qualifiedUnit()])
     setActionStatus("Avvio del tunnel, apro il login")
     // The listener needs a moment before the gateway can redirect back to it.
     browserDelay.restart()
@@ -343,6 +354,16 @@ Item {
       if (root.connected || ticks >= 40) connectRamp.running = false
       else root.refresh()
     }
+  }
+
+  Timer {
+    // A profile installed after the shell started would otherwise go unnoticed
+    // until the next restart, leaving the widget on the wrong backend.
+    id: unitRecheck
+    interval: 30000
+    repeat: true
+    running: root.unit !== "" && !root._unitExists
+    onTriggered: root.checkAvailability()
   }
 
   Timer {

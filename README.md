@@ -100,14 +100,16 @@ polkit.addRule(function(action, subject) {
     if (!subject.isInGroup("wheel") || !subject.local || !subject.active) return;
     if (action.lookup("unit") !== "openfortivpn@<name>.service") return;
     var verb = action.lookup("verb");
-    if (verb === "start" || verb === "stop" || verb === "restart") {
+    if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reset-failed") {
         return polkit.Result.YES;
     }
 });
 ```
 
 This grants no general root access, and connecting still requires completing
-the SSO login in a browser.
+the SSO login in a browser. `reset-failed` belongs in the list because a unit
+that hit its start limit refuses every further start until the failure is
+cleared, which would otherwise leave the connect button dead.
 
 **4. Point the widget at it**, in `~/.config/omarchy/shell.json`:
 

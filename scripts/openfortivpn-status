@@ -3,13 +3,33 @@
 # "Key: value" shape that `fortivpn status` prints, so a single parser in
 # Model.js serves both backends and neither one needs a special case.
 #
-# Usage: openfortivpn-status [unit]
-#   unit defaults to openfortivpn@vpn.service; a bare name gets .service added.
+# Usage: openfortivpn-status <unit> [--check]
+#   --check  print nothing; exit 0 only if the unit is actually usable.
+#
+# An "Error:" line carries the reason a tunnel cannot come up, so the panel can
+# say what is wrong instead of leaving a click with no visible effect.
 
 set -uo pipefail
 
 unit="${1:-openfortivpn@vpn}"
 [[ "$unit" == *.service ]] || unit="${unit}.service"
+mode="${2:-}"
+
+instance="${unit#openfortivpn@}"
+instance="${instance%.service}"
+
+# systemd resolves openfortivpn@anything.service from the packaged template, so
+# `systemctl cat` succeeds even for a profile that was never created. The real
+# question is whether the config the unit will read actually exists.
+conf="$(systemctl show -p ExecStart --value "$unit" 2>/dev/null |
+	grep -oE '/etc/openfortivpn/[^ ";]+\.conf' | head -1)"
+[[ -n "$conf" ]] || conf="/etc/openfortivpn/${instance}.conf"
+
+if [[ "$mode" == "--check" ]]; then
+	systemctl cat "$unit" >/dev/null 2>&1 || exit 1
+	[[ -e "$conf" ]] || exit 1
+	exit 0
+fi
 
 active="$(systemctl is-active "$unit" 2>/dev/null)"
 case "$active" in
@@ -20,12 +40,25 @@ case "$active" in
 esac
 
 echo "Status: ${state}"
-[[ "$state" == "Connected" ]] || exit 0
+
+if [[ "$state" != "Connected" ]]; then
+	# Say why, when there is a why. A missing profile is the common one and is
+	# otherwise invisible: the unit simply refuses to start.
+	if [[ ! -e "$conf" ]]; then
+		echo "Error: Manca il profilo ${conf}"
+	elif [[ "$active" == "failed" ]]; then
+		result="$(systemctl show -p Result --value "$unit" 2>/dev/null)"
+		if [[ "$result" == "start-limit-hit" ]]; then
+			echo "Error: Troppi avvii falliti; serve un reset prima di riprovare"
+		else
+			echo "Error: L'unit ${unit} è in stato failed (${result:-sconosciuto})"
+		fi
+	fi
+	exit 0
+fi
 
 # openfortivpn@work.service -> "work", which is the profile the user named.
-name="${unit#openfortivpn@}"
-name="${name%.service}"
-echo "VPN name: ${name}"
+echo "VPN name: ${instance}"
 
 # Whichever ppp device openfortivpn brought up; the number is not stable.
 iface="$(ip -o link show type ppp 2>/dev/null | awk -F': ' 'NR==1 {print $2}')"
