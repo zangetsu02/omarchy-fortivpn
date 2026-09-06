@@ -1,0 +1,163 @@
+#!/bin/bash
+# Sets up an openfortivpn profile that the FortiVPN bar widget can drive:
+# a config, a systemd drop-in, and a polkit rule scoped to that one unit.
+#
+# Usage: sudo setup-openfortivpn <profile> <gateway-host> [port] [saml-port]
+# Example: sudo setup-openfortivpn work vpn.example.com 10443
+#
+# Safe to re-run: every step overwrites its own file and nothing else.
+
+set -euo pipefail
+
+die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+
+[[ $# -ge 2 ]] || die "usage: $0 <profile> <gateway-host> [port] [saml-port]"
+
+profile="$1"
+host="$2"
+port="${3:-10443}"
+saml_port="${4:-8020}"
+
+[[ "$profile" =~ ^[A-Za-z0-9_-]+$ ]] || die "profile name must be alphanumeric, got '$profile'"
+(( EUID == 0 )) || die "run as root (sudo $0 ...)"
+command -v openfortivpn >/dev/null || die "openfortivpn is not installed"
+command -v openssl >/dev/null || die "openssl is not installed"
+
+unit="openfortivpn@${profile}.service"
+conf="/etc/openfortivpn/${profile}.conf"
+chain="/etc/openfortivpn/${profile}-chain.pem"
+dropin_dir="/etc/systemd/system/${unit}.d"
+rule="/etc/polkit-1/rules.d/49-omarchy-fortivpn-${profile}.rules"
+
+# The user who will click the widget. Under sudo that is not root.
+target_user="${SUDO_USER:-}"
+[[ -n "$target_user" ]] || die "cannot tell which user to authorise; run via sudo, not as a root login"
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+# --- 1. Certificate chain ---------------------------------------------------
+#
+# Plenty of FortiGate deployments serve only their leaf certificate. The chain
+# is then unverifiable on its own, and openfortivpn offers to pin the
+# fingerprint instead — which breaks at every certificate renewal. Fetching the
+# intermediate the leaf itself names is the fix that keeps working.
+
+note "Checking the certificate chain of ${host}:${port}"
+if ! openssl s_client -connect "${host}:${port}" -servername "$host" </dev/null 2>/dev/null \
+	| openssl x509 >"$tmp/leaf.pem" 2>/dev/null; then
+	die "cannot reach ${host}:${port} to read its certificate"
+fi
+[[ -s "$tmp/leaf.pem" ]] || die "no certificate returned by ${host}:${port}"
+
+verify_out="$(openssl s_client -connect "${host}:${port}" -servername "$host" </dev/null 2>/dev/null \
+	| grep -c 'Verify return code: 0' || true)"
+
+ca_line=""
+if [[ "$verify_out" == "0" ]]; then
+	aia="$(openssl x509 -in "$tmp/leaf.pem" -noout -text 2>/dev/null |
+		grep -A1 'CA Issuers' | grep -oE 'https?://[^ ]+' | head -1)"
+	if [[ -z "$aia" ]]; then
+		note "Chain is incomplete and the certificate names no CA Issuers URL."
+		note "Continuing without a bundle; the tunnel may refuse to verify."
+	else
+		note "Chain is incomplete; fetching the intermediate from ${aia}"
+		curl -fsS "$aia" -o "$tmp/inter.der" || die "could not download the intermediate"
+		# Published as DER far more often than PEM, but accept either.
+		openssl x509 -inform DER -in "$tmp/inter.der" -out "$tmp/inter.pem" 2>/dev/null ||
+			cp "$tmp/inter.der" "$tmp/inter.pem"
+
+		if ! openssl verify -untrusted "$tmp/inter.pem" "$tmp/leaf.pem" >/dev/null 2>&1; then
+			die "the fetched intermediate does not complete the chain; refusing to trust it"
+		fi
+		note "Chain verified against the system roots"
+
+		cat "$tmp/inter.pem" /etc/ssl/certs/ca-certificates.crt >"$tmp/chain.pem"
+		install -m 644 -D "$tmp/chain.pem" "$chain"
+		ca_line="ca-file = ${chain}"
+		note "Wrote ${chain}"
+	fi
+else
+	note "Gateway serves a complete chain; no bundle needed"
+fi
+
+# --- 2. Profile -------------------------------------------------------------
+
+note "Writing ${conf}"
+umask 077
+cat >"$tmp/conf" <<EOF
+# Managed by setup-openfortivpn. Re-running the script overwrites this file.
+host = ${host}
+port = ${port}
+
+# Local HTTP server that receives the gateway's SAML redirect after the
+# browser login. The gateway must already redirect to this port.
+saml-login = ${saml_port}
+${ca_line}
+EOF
+install -m 600 -D "$tmp/conf" "$conf"
+
+# --- 3. systemd drop-in -----------------------------------------------------
+
+note "Writing ${dropin_dir}/override.conf"
+cat >"$tmp/override.conf" <<'EOF'
+[Service]
+# A person has to complete an SSO login in a browser, which systemd's default
+# 90 seconds does not allow for.
+TimeoutStartSec=300
+
+# An automatic restart would silently demand a fresh interactive login, which
+# is not what anyone expects from a service that just died.
+Restart=no
+EOF
+install -m 644 -D "$tmp/override.conf" "${dropin_dir}/override.conf"
+
+# --- 4. polkit rule ---------------------------------------------------------
+#
+# Scoped deliberately: one unit, four verbs, local active sessions only.
+# reset-failed is included because a unit that hit its start limit refuses
+# every further start until the failure is cleared, which would leave the
+# widget's connect button permanently dead.
+
+note "Writing ${rule}"
+cat >"$tmp/rule" <<EOF
+// Managed by setup-openfortivpn for the '${profile}' VPN profile.
+//
+// Lets a local, active session start and stop this one VPN unit without a
+// password. This is not general root access: connecting still requires
+// completing the SSO login in a browser, so the rule alone grants nobody
+// access to the network behind the tunnel.
+polkit.addRule(function(action, subject) {
+    if (action.id !== "org.freedesktop.systemd1.manage-units") return;
+    if (!subject.local || !subject.active) return;
+    if (subject.user !== "${target_user}") return;
+    if (action.lookup("unit") !== "${unit}") return;
+
+    var verb = action.lookup("verb");
+    if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reset-failed") {
+        return polkit.Result.YES;
+    }
+});
+EOF
+install -m 644 -D "$tmp/rule" "$rule"
+
+systemctl daemon-reload
+
+# --- 5. What the user still has to do --------------------------------------
+
+cat <<EOF
+
+$(note "Done. Add this to the widget entry in ~/.config/omarchy/shell.json:")
+
+    {
+      "id": "zangetsu.fortivpn",
+      "openfortivpnUnit": "openfortivpn@${profile}",
+      "samlUrl": "https://${host}:${port}/remote/saml/start?redirect=1"
+    }
+
+Then restart the shell so the widget picks up the new unit:
+
+    omarchy restart shell
+
+EOF
