@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "zangetsu.fortivpn",
   "name": "FortiVPN",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "author": "Christian Palladini",
   "license": "MIT",
-  "description": "FortiClient VPN status in the Omarchy bar: connection state, assigned IP, uptime and traffic, with one-click disconnect and a shortcut into the SAML login.",
+  "description": "Fortinet VPN status in the Omarchy bar: connection state, assigned IP, uptime and traffic, with connect and disconnect from the panel. Drives either FortiClient or openfortivpn.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,11 +14,15 @@
   },
   "barWidget": {
     "displayName": "FortiVPN",
-    "description": "Watch the FortiClient tunnel, disconnect from the bar, and open the GUI when a fresh SSO login is needed.",
+    "description": "Watch a Fortinet SSL VPN, connect and disconnect from the bar, and reach the SAML login in one click.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
+      "backend": "auto",
+      "openfortivpnUnit": "",
+      "samlUrl": "",
+      "browserCommand": "omarchy-launch-browser",
       "refreshIntervalSec": 5,
       "hideWhenDisconnected": false,
       "notifyOnDrop": true,
@@ -27,6 +31,35 @@
       "guiCommand": "/opt/forticlient/gui/FortiClient"
     },
     "schema": [
+      {
+        "key": "backend",
+        "type": "enum",
+        "label": "Backend",
+        "options": ["auto", "forticlient", "openfortivpn"],
+        "defaultValue": "auto",
+        "description": "auto picks openfortivpn when its unit exists, otherwise FortiClient. Only openfortivpn can connect without opening a GUI."
+      },
+      {
+        "key": "openfortivpnUnit",
+        "type": "string",
+        "label": "openfortivpn systemd unit",
+        "description": "For example openfortivpn@work. Leave empty to use FortiClient.",
+        "defaultValue": ""
+      },
+      {
+        "key": "samlUrl",
+        "type": "string",
+        "label": "SAML login URL",
+        "description": "Opened in the browser on connect, e.g. https://vpn.example.com:10443/remote/saml/start?redirect=1 — without it, connecting falls back to the FortiClient GUI.",
+        "defaultValue": ""
+      },
+      {
+        "key": "browserCommand",
+        "type": "command",
+        "label": "Browser command",
+        "description": "Used to open the SAML login page.",
+        "defaultValue": "omarchy-launch-browser"
+      },
       {
         "key": "refreshIntervalSec",
         "type": "integer",
@@ -60,14 +93,14 @@
         "key": "cliPath",
         "type": "path",
         "label": "Path to the fortivpn CLI",
-        "description": "Leave empty to find fortivpn on PATH.",
+        "description": "FortiClient backend only. Leave empty to find fortivpn on PATH.",
         "defaultValue": ""
       },
       {
         "key": "guiCommand",
-        "type": "string",
+        "type": "command",
         "label": "Command that opens the FortiClient GUI",
-        "description": "Used by Connect, because SAML/SSO login has to happen in the GUI's browser flow.",
+        "description": "FortiClient backend only, because its SAML login has to happen in the GUI's browser flow.",
         "defaultValue": "/opt/forticlient/gui/FortiClient"
       }
     ]
