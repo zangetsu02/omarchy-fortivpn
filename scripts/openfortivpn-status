@@ -45,13 +45,13 @@ if [[ "$state" != "Connected" ]]; then
 	# Say why, when there is a why. A missing profile is the common one and is
 	# otherwise invisible: the unit simply refuses to start.
 	if [[ ! -e "$conf" ]]; then
-		echo "Error: Manca il profilo ${conf}"
+		echo "Error: Missing profile ${conf}"
 	elif [[ "$active" == "failed" ]]; then
 		result="$(systemctl show -p Result --value "$unit" 2>/dev/null)"
 		if [[ "$result" == "start-limit-hit" ]]; then
-			echo "Error: Troppi avvii falliti; serve un reset prima di riprovare"
+			echo "Error: Too many failed starts; clear it with a reset before retrying"
 		else
-			echo "Error: L'unit ${unit} è in stato failed (${result:-sconosciuto})"
+			echo "Error: Unit ${unit} is in failed state (${result:-unknown})"
 		fi
 	fi
 	exit 0
