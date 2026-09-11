@@ -100,11 +100,11 @@ function parseStatus(raw) {
 }
 
 function stateLabel(state) {
-  if (state === STATE_CONNECTED) return "Connesso"
-  if (state === STATE_CONNECTING) return "Connessione…"
-  if (state === STATE_DISCONNECTED) return "Disconnesso"
-  if (state === STATE_UNAVAILABLE) return "Non disponibile"
-  return "Sconosciuto"
+  if (state === STATE_CONNECTED) return "Connected"
+  if (state === STATE_CONNECTING) return "Connecting…"
+  if (state === STATE_DISCONNECTED) return "Disconnected"
+  if (state === STATE_UNAVAILABLE) return "Unavailable"
+  return "Unknown"
 }
 
 function formatBytes(bytes) {
