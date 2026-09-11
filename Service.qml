@@ -46,6 +46,8 @@ Item {
 
   property bool _unitExists: false
   property bool _checkedUnit: false
+  property bool _cliFound: false
+  property bool _checkedCli: false
 
   readonly property string backend: {
     if (backendSetting === "forticlient" || backendSetting === "openfortivpn") return backendSetting
@@ -118,6 +120,20 @@ Item {
       whichProcess.command = ["which", root.cliPath]
       whichProcess.running = true
     }
+  }
+
+  // The two probes run concurrently, and `which` on a missing CLI answers long
+  // before the unit check does. Deciding on the first answer alone therefore
+  // declared the backend absent while an openfortivpn unit was still being
+  // verified, and checkedInstall latched that verdict for good. Wait for both.
+  function settleAvailability() {
+    if (!_checkedCli || !_checkedUnit) return
+    checkedInstall = true
+    installed = _cliFound || (unit !== "" && _unitExists)
+    if (installed) refresh()
+    // openfortivpn does not need the FortiClient CLI at all, so its backend
+    // counts as installed on the strength of its unit alone.
+    else markUnavailable("Nessun backend disponibile: né la CLI fortivpn né un'unit openfortivpn.")
   }
 
   function statusCommand() {
@@ -259,6 +275,7 @@ Item {
     onExited: function (exitCode) {
       root._unitExists = exitCode === 0
       root._checkedUnit = true
+      root.settleAvailability()
     }
   }
 
@@ -267,12 +284,9 @@ Item {
     running: false
     command: []
     onExited: function (exitCode) {
-      root.checkedInstall = true
-      // openfortivpn does not need the FortiClient CLI at all, so its backend
-      // counts as installed on the strength of its unit alone.
-      root.installed = exitCode === 0 || (root.unit !== "" && root._unitExists)
-      if (root.installed) root.refresh()
-      else root.markUnavailable("Nessun backend disponibile: né la CLI fortivpn né un'unit openfortivpn.")
+      root._cliFound = exitCode === 0
+      root._checkedCli = true
+      root.settleAvailability()
     }
   }
 
