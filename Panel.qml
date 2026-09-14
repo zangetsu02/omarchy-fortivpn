@@ -26,18 +26,18 @@ Panel {
 
   readonly property string title: vpn.vpnName !== "" ? vpn.vpnName : "FortiVPN"
   readonly property string heroMeta: {
-    if (!vpn.installed) return "CLI non trovata"
+    if (!vpn.installed) return "CLI not found"
     if (vpn.connected) return vpn.liveDurationSec >= 0
-      ? "Connesso · " + Model.secondsToDuration(vpn.liveDurationSec)
-      : "Connesso"
+      ? "Connected · " + Model.secondsToDuration(vpn.liveDurationSec)
+      : "Connected"
     return vpn.stateLabel
   }
-  readonly property string actionLabel: vpn.connected ? "Disconnetti" : "Connetti"
+  readonly property string actionLabel: vpn.connected ? "Disconnect" : "Connect"
   readonly property string actionHint: {
-    if (vpn.connected) return "Chiude il tunnel"
+    if (vpn.connected) return "Closes the tunnel"
     return vpn.canConnectDirectly
-      ? "Avvia il tunnel e apre il login nel browser"
-      : "Apre FortiClient per il login"
+      ? "Starts the tunnel and opens the login in your browser"
+      : "Opens FortiClient for the login"
   }
 
   visible: !hideWhenDisconnected || vpn.connected || vpn.connecting
@@ -159,9 +159,9 @@ Panel {
           visible: vpn.connected
 
           InfoRow { label: "IP"; value: vpn.ip }
-          InfoRow { label: "Utente"; value: vpn.username }
+          InfoRow { label: "User"; value: vpn.username }
           InfoRow {
-            label: "Traffico"
+            label: "Traffic"
             value: "↑ " + Model.formatBytes(vpn.sentBytes) + "   ↓ " + Model.formatBytes(vpn.recvBytes)
           }
         }
@@ -171,10 +171,10 @@ Panel {
           visible: !vpn.connected && vpn.installed
           width: parent.width
           text: {
-            if (vpn.connecting) return "Tunnel in salita. Completa il login nel browser."
+            if (vpn.connecting) return "Tunnel coming up. Complete the login in your browser."
             return vpn.canConnectDirectly
-              ? "Connetti apre il login nel browser: account Microsoft e conferma sull'app Authenticator."
-              : "Il login passa da FortiClient: account Microsoft e conferma sull'app Authenticator."
+              ? "Connect opens the login in your browser, then confirm it with your identity provider."
+              : "The login goes through FortiClient, then confirm it with your identity provider."
           }
           color: root.dim
           font.family: root.fontFamily
@@ -186,7 +186,7 @@ Panel {
           textFormat: Text.PlainText
           visible: !vpn.installed && vpn.checkedInstall
           width: parent.width
-          text: "Nessun backend raggiungibile: né la CLI fortivpn nel PATH, né un'unit openfortivpn. Controlla le impostazioni del widget."
+          text: "No backend reachable: no fortivpn CLI on PATH and no openfortivpn unit. Check the widget settings."
           color: root.urgent
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall

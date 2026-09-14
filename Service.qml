@@ -46,6 +46,8 @@ Item {
 
   property bool _unitExists: false
   property bool _checkedUnit: false
+  property bool _cliFound: false
+  property bool _checkedCli: false
 
   readonly property string backend: {
     if (backendSetting === "forticlient" || backendSetting === "openfortivpn") return backendSetting
@@ -120,6 +122,20 @@ Item {
     }
   }
 
+  // The two probes run concurrently, and `which` on a missing CLI answers long
+  // before the unit check does. Deciding on the first answer alone therefore
+  // declared the backend absent while an openfortivpn unit was still being
+  // verified, and checkedInstall latched that verdict for good. Wait for both.
+  function settleAvailability() {
+    if (!_checkedCli || !_checkedUnit) return
+    checkedInstall = true
+    installed = _cliFound || (unit !== "" && _unitExists)
+    if (installed) refresh()
+    // openfortivpn does not need the FortiClient CLI at all, so its backend
+    // counts as installed on the strength of its unit alone.
+    else markUnavailable("No backend available: neither the fortivpn CLI nor an openfortivpn unit.")
+  }
+
   function statusCommand() {
     if (usesOpenfortivpn) return ["bash", root.statusScript, root.qualifiedUnit()]
     return [root.cliPath, "status"]
@@ -162,7 +178,7 @@ Item {
     _prevState = next
     if (prev === next) return
     if (next === Model.STATE_CONNECTED && prev !== Model.STATE_UNKNOWN && notifyOnConnect) {
-      notify("VPN connessa", (vpnName || "FortiClient") + " — " + (ip || ""), "low")
+      notify("VPN connected", (vpnName || "FortiClient") + " — " + (ip || ""), "low")
       return
     }
     // Only a fall from a tunnel that was actually up counts as a drop, and only
@@ -172,7 +188,7 @@ Item {
         _userDisconnecting = false
         return
       }
-      if (notifyOnDrop) notify("VPN caduta", (vpnName || "FortiClient") + " si è disconnessa.", "critical")
+      if (notifyOnDrop) notify("VPN dropped", (vpnName || "FortiClient") + " disconnected.", "critical")
     }
   }
 
@@ -210,7 +226,7 @@ Item {
     Quickshell.execDetached(["bash", "-c",
       "systemctl reset-failed " + root.qualifiedUnit() + " 2>/dev/null; " +
       "systemctl start --no-block " + root.qualifiedUnit()])
-    setActionStatus("Avvio del tunnel, apro il login")
+    setActionStatus("Starting the tunnel, opening the login")
     // The listener needs a moment before the gateway can redirect back to it.
     browserDelay.restart()
     connectRamp.ticks = 0
@@ -222,11 +238,11 @@ Item {
   // the GUI rather than pretending the tunnel can be raised from here.
   function connectViaGui() {
     if (guiCommand === "") {
-      setActionStatus("Nessun comando GUI configurato")
+      setActionStatus("No GUI command configured")
       return
     }
     Quickshell.execDetached(["bash", "-c", guiCommand + " >/dev/null 2>&1 &"])
-    setActionStatus("Apro FortiClient per il login")
+    setActionStatus("Opening FortiClient for the login")
     connectRamp.ticks = 0
     connectRamp.running = true
   }
@@ -244,7 +260,7 @@ Item {
       ? ["systemctl", "stop", root.qualifiedUnit()]
       : [root.cliPath, "disconnect"]
     disconnectProcess.running = true
-    setActionStatus("Disconnessione…")
+    setActionStatus("Disconnecting…")
   }
 
   function toggle() {
@@ -259,6 +275,7 @@ Item {
     onExited: function (exitCode) {
       root._unitExists = exitCode === 0
       root._checkedUnit = true
+      root.settleAvailability()
     }
   }
 
@@ -267,12 +284,9 @@ Item {
     running: false
     command: []
     onExited: function (exitCode) {
-      root.checkedInstall = true
-      // openfortivpn does not need the FortiClient CLI at all, so its backend
-      // counts as installed on the strength of its unit alone.
-      root.installed = exitCode === 0 || (root.unit !== "" && root._unitExists)
-      if (root.installed) root.refresh()
-      else root.markUnavailable("Nessun backend disponibile: né la CLI fortivpn né un'unit openfortivpn.")
+      root._cliFound = exitCode === 0
+      root._checkedCli = true
+      root.settleAvailability()
     }
   }
 
@@ -288,7 +302,7 @@ Item {
       var err = String(statusStderr.text || root._statusError || "")
       if (exitCode !== 0) {
         root._consecutiveFailures += 1
-        root.lastError = err.trim() || "Il controllo di stato è uscito con codice " + exitCode
+        root.lastError = err.trim() || "The status check exited with code " + exitCode
         if (root._consecutiveFailures >= root.failuresBeforeUnavailable) root.markUnavailable(root.lastError)
         return
       }
@@ -304,12 +318,12 @@ Item {
     stderr: StdioCollector { id: disconnectStderr; waitForEnd: true; onStreamFinished: root._disconnectError = text }
     onExited: function (exitCode) {
       if (exitCode === 0) {
-        root.setActionStatus("Disconnessa")
+        root.setActionStatus("Disconnected")
       } else {
         // The flag would otherwise swallow the drop notification for a teardown
         // that never happened.
         root._userDisconnecting = false
-        root.setActionStatus("Disconnessione fallita")
+        root.setActionStatus("Disconnect failed")
         root.lastError = String(disconnectStderr.text || root._disconnectError || "").trim()
       }
       root.refresh()
