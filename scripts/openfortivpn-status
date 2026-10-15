@@ -4,12 +4,36 @@
 # Model.js serves both backends and neither one needs a special case.
 #
 # Usage: openfortivpn-status <unit> [--check]
+#        openfortivpn-status --list
 #   --check  print nothing; exit 0 only if the unit is actually usable.
+#   --list   print every profile as "<name><TAB><saml-url>", one per line.
 #
 # An "Error:" line carries the reason a tunnel cannot come up, so the panel can
 # say what is wrong instead of leaving a click with no visible effect.
 
 set -uo pipefail
+
+# Overridable so the self-check can point discovery at a fixture directory.
+conf_dir="${OPENFORTIVPN_DIR:-/etc/openfortivpn}"
+
+# A profile config is mode 600, so the widget running as the user cannot read
+# the gateway out of it. The systemd drop-in is world readable, which is why
+# setup-openfortivpn records the login URL there instead.
+saml_url_for() {
+	systemctl show -p Environment --value "$1" 2>/dev/null |
+		tr ' ' '\n' | sed -n 's/^FORTIVPN_SAML_URL=//p' | head -1
+}
+
+# Every <name>.conf in the directory is a profile; "config" and the certificate
+# bundles that live beside them are not, and the glob already excludes them.
+if [[ "${1:-}" == "--list" ]]; then
+	for conf in "$conf_dir"/*.conf; do
+		[[ -e "$conf" ]] || continue
+		name="$(basename "$conf" .conf)"
+		printf '%s\t%s\n' "$name" "$(saml_url_for "openfortivpn@${name}.service")"
+	done
+	exit 0
+fi
 
 unit="${1:-openfortivpn@vpn}"
 [[ "$unit" == *.service ]] || unit="${unit}.service"
@@ -23,7 +47,7 @@ instance="${instance%.service}"
 # question is whether the config the unit will read actually exists.
 conf="$(systemctl show -p ExecStart --value "$unit" 2>/dev/null |
 	grep -oE '/etc/openfortivpn/[^ ";]+\.conf' | head -1)"
-[[ -n "$conf" ]] || conf="/etc/openfortivpn/${instance}.conf"
+[[ -n "$conf" ]] || conf="${conf_dir}/${instance}.conf"
 
 if [[ "$mode" == "--check" ]]; then
 	systemctl cat "$unit" >/dev/null 2>&1 || exit 1
@@ -45,14 +69,18 @@ if [[ "$state" != "Connected" ]]; then
 	# Say why, when there is a why. A missing profile is the common one and is
 	# otherwise invisible: the unit simply refuses to start.
 	if [[ ! -e "$conf" ]]; then
-		echo "Error: Missing profile ${conf}"
+		echo "Error: Profile ${instance} has no config at ${conf}"
 	elif [[ "$active" == "failed" ]]; then
+		# Said the way a person would say it, because this line is the whole
+		# explanation the panel gets to show. The raw systemd result survives only
+		# where there is nothing better to say.
 		result="$(systemctl show -p Result --value "$unit" 2>/dev/null)"
-		if [[ "$result" == "start-limit-hit" ]]; then
-			echo "Error: Too many failed starts; clear it with a reset before retrying"
-		else
-			echo "Error: Unit ${unit} is in failed state (${result:-unknown})"
-		fi
+		case "$result" in
+			start-limit-hit) echo "Error: Too many failed starts. Connecting again clears it and retries." ;;
+			timeout)         echo "Error: The login took too long and the tunnel gave up." ;;
+			exit-code)       echo "Error: The last connection attempt failed. Check the gateway, then try again." ;;
+			*)               echo "Error: The tunnel stopped unexpectedly (${result:-unknown})." ;;
+		esac
 	fi
 	exit 0
 fi
