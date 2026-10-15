@@ -158,7 +158,7 @@ $(note "Done. The widget discovers this profile on its own; nothing to configure
 If it is not in the bar yet, add the entry to ~/.config/omarchy/shell.json:
 
     {
-      "id": "zangetsu.fortivpn"
+      "id": "io.github.zangetsu02.fortivpn"
     }
 
 With more than one profile installed, pick the active one from the widget's
