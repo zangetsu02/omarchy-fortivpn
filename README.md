@@ -60,7 +60,56 @@ FortiClient's naming is not self-evident, and `Model.js` maps it:
 | `Not Running` | Disconnesso | The normal idle state |
 | `Disconnected` | Disconnesso | Only flashes by during teardown |
 
+## Profiles
+
+A profile is one `/etc/openfortivpn/<name>.conf` and the systemd instance that
+reads it. The widget **discovers** them instead of being told about them, so a
+profile created with `setup-openfortivpn` shows up in the panel on its own.
+
+The active profile is the panel's headline, and the chevron beside it opens the
+list: the current one is marked, the others are one click away. Switching while
+a tunnel is up tears the old one down first — one ppp route table, one gateway
+at a time — and then connects the new profile, so a switch is one click. The
+choice is written back to `shell.json`, which is what makes it survive a
+restart; it is read from `activeProfile`.
+
+**Add profile…** at the end of that list opens a form for a name, a gateway and
+a port. Each row also carries a pencil and a bin: changing a profile is the same
+form with the name fixed, and removing one asks first.
+
+None of the three can be done by the widget itself — they write to `/etc` and
+install or delete a polkit rule, which is root work a bar widget has no business
+doing. So the panel hands the prepared command to a terminal and the script runs
+there: your password stays in the terminal, and the output stays on screen when
+something goes wrong.
+
+Editing works because [`setup-openfortivpn`](scripts/setup-openfortivpn)
+overwrites its own files, so saving a profile is just creating it again with the
+name kept. Gateway and port come back from the login URL in the drop-in, since
+the config that holds them is root-only; a profile set up before that line was
+written opens with those fields blank. Renaming is not an edit — it would leave
+the old profile in place — so the name is fixed once a profile exists.
+
+[`scripts/remove-openfortivpn`](scripts/remove-openfortivpn) stops the unit and
+deletes the four files the setup wrote. A drop-in directory that holds anything
+else is left in place rather than emptied.
+
+Each profile needs its own login URL, and the config it would come from is mode
+600 root-only. So `setup-openfortivpn` records it in the systemd drop-in, which
+is world readable:
+
+```ini
+Environment=FORTIVPN_SAML_URL=https://vpn.example.com:10443/remote/saml/start?redirect=1
+```
+
+A profile without that line still connects; it just cannot open the login page
+by itself, unless `samlUrl` in the settings covers it. Re-running the setup
+script adds the line.
+
 ## Installing on a machine
+
+A profile can also be created, changed and removed from the panel itself; see
+**Profiles** below.
 
 ```bash
 # 1. The widget itself. Omarchy follows the symlink, so the checkout stays
@@ -70,10 +119,12 @@ ln -s ~/Workspaces/omarchy-fortivpn ~/.config/omarchy/plugins/zangetsu.fortivpn
 
 # 2. Add {"id": "zangetsu.fortivpn"} to bar.layout in ~/.config/omarchy/shell.json
 
-# 3. For the openfortivpn backend, the system side in one step:
+# 3. For the openfortivpn backend, the system side in one step per profile:
 sudo pacman -S openfortivpn
 sudo ~/Workspaces/omarchy-fortivpn/scripts/setup-openfortivpn work vpn.example.com 10443
 ```
+
+Nothing else to configure: the widget finds the profile by itself.
 
 [`scripts/setup-openfortivpn`](scripts/setup-openfortivpn) writes the profile,
 the systemd drop-in and a polkit rule scoped to that one unit, then prints the
@@ -139,12 +190,18 @@ the SSO login in a browser. `reset-failed` belongs in the list because a unit
 that hit its start limit refuses every further start until the failure is
 cleared, which would otherwise leave the connect button dead.
 
-**4. Point the widget at it**, in `~/.config/omarchy/shell.json`:
+**4. Nothing**, as long as the profile sits in `/etc/openfortivpn` and its unit
+follows the `openfortivpn@<name>` convention: the widget discovers it. Add the
+`Environment=FORTIVPN_SAML_URL=…` line from the section above to the drop-in
+and it can open the login page too.
+
+A unit named outside that convention still works, named explicitly in
+`~/.config/omarchy/shell.json`:
 
 ```json
 {
   "id": "zangetsu.fortivpn",
-  "openfortivpnUnit": "openfortivpn@<name>",
+  "openfortivpnUnit": "my-vpn@<name>",
   "samlUrl": "https://vpn.example.com:10443/remote/saml/start?redirect=1"
 }
 ```
@@ -159,14 +216,20 @@ falls back to FortiClient when it does not.
 | Open the panel | Left click | — |
 | Connect / disconnect | Right click | `Enter`, or `c` / `d` |
 | Refresh now | Middle click | `r` |
+| Show the profile list | Chevron in the panel | `p` |
+| Switch profile | Click a profile | `1`–`9` |
+| Add a profile | "Add profile…" | `a` |
+| Change a profile | Pencil on its row | `e` (the active one) |
+| Remove a profile | Bin on its row | `x` (the active one) |
 
 ## Settings
 
 | Key | Default | Meaning |
 |---|---|---|
 | `backend` | `auto` | `auto`, `forticlient`, or `openfortivpn`. |
-| `openfortivpnUnit` | `""` | e.g. `openfortivpn@work`. Empty means FortiClient. |
-| `samlUrl` | `""` | Opened on connect. Without it, connect falls back to the GUI. |
+| `activeProfile` | `""` | Which discovered profile to drive. Written for you when you pick one. |
+| `openfortivpnUnit` | `""` | Only for a unit outside the `openfortivpn@<name>` convention. |
+| `samlUrl` | `""` | Fallback login URL for profiles whose drop-in records none. |
 | `browserCommand` | `omarchy-launch-browser` | Opens the login page. |
 | `refreshIntervalSec` | `5` | Poll interval; the duration ticks locally between polls. |
 | `hideWhenDisconnected` | `false` | Hide the icon while the tunnel is down. |
@@ -184,6 +247,8 @@ omarchy-shell fortivpn refresh     # poll now
 omarchy-shell fortivpn connect     # connect, or open the GUI
 omarchy-shell fortivpn disconnect  # tear the tunnel down
 omarchy-shell fortivpn toggle      # open/close the panel
+omarchy-shell fortivpn profiles    # discovered profiles, one per line
+omarchy-shell fortivpn profile work  # switch to a profile, disconnecting first
 ```
 
 Changing the set of IPC functions a plugin exposes needs `omarchy restart
@@ -198,7 +263,10 @@ shell`; a hot reload keeps serving the old registration.
 | `Service.qml` | Backend selection, polling, connect and disconnect, notifications |
 | `Panel.qml` | Bar icon and panel |
 | `FortiVpnIcon.qml` | Shield glyph, filled when protected |
-| `scripts/openfortivpn-status` | Reports an openfortivpn unit in the shared format |
+| `scripts/openfortivpn-status` | Reports an openfortivpn unit in the shared format; `--list` discovers profiles |
+| `scripts/setup-openfortivpn` | Provisions a profile: config, drop-in, polkit rule |
+| `scripts/remove-openfortivpn` | Tears one back down, unit first |
+| `scripts/selftest` | Checks discovery, parsing, form validation and the removal guards |
 
 ## Requirements
 

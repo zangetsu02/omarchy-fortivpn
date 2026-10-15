@@ -2,10 +2,10 @@
   "schemaVersion": 1,
   "id": "zangetsu.fortivpn",
   "name": "FortiVPN",
-  "version": "2.1.0",
+  "version": "2.3.0",
   "author": "Christian Palladini",
   "license": "MIT",
-  "description": "Fortinet VPN status in the Omarchy bar: connection state, assigned IP, uptime and traffic, with connect and disconnect from the panel. Drives either FortiClient or openfortivpn.",
+  "description": "Fortinet VPN status in the Omarchy bar: connection state, assigned IP, uptime and traffic, with connect and disconnect from the panel. Drives either FortiClient or openfortivpn, across as many profiles as are installed.",
   "kinds": [
     "bar-widget"
   ],
@@ -14,12 +14,13 @@
   },
   "barWidget": {
     "displayName": "FortiVPN",
-    "description": "Watch a Fortinet SSL VPN, connect and disconnect from the bar, and reach the SAML login in one click.",
+    "description": "Watch a Fortinet SSL VPN, connect and disconnect from the bar, reach the SAML login in one click, and keep several profiles side by side.",
     "category": "Network",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
       "backend": "auto",
+      "activeProfile": "",
       "openfortivpnUnit": "",
       "samlUrl": "",
       "browserCommand": "omarchy-launch-browser",
@@ -40,17 +41,24 @@
         "description": "auto picks openfortivpn when its unit exists, otherwise FortiClient. Only openfortivpn can connect without opening a GUI."
       },
       {
+        "key": "activeProfile",
+        "type": "string",
+        "label": "Active profile",
+        "description": "Which /etc/openfortivpn profile the widget drives, by name. Profiles are discovered, so this is written for you when you pick one from the panel; with a single profile installed it can stay empty.",
+        "defaultValue": ""
+      },
+      {
         "key": "openfortivpnUnit",
         "type": "string",
         "label": "openfortivpn systemd unit",
-        "description": "For example openfortivpn@work. Leave empty to use FortiClient.",
+        "description": "Only for a unit that does not follow the openfortivpn@<profile> convention, since those are discovered. For example openfortivpn@work.",
         "defaultValue": ""
       },
       {
         "key": "samlUrl",
         "type": "string",
         "label": "SAML login URL",
-        "description": "Opened in the browser on connect, e.g. https://vpn.example.com:10443/remote/saml/start?redirect=1 — without it, connecting falls back to the FortiClient GUI.",
+        "description": "Fallback for profiles whose drop-in does not record a login URL, e.g. https://vpn.example.com:10443/remote/saml/start?redirect=1 — without one, connecting falls back to the FortiClient GUI.",
         "defaultValue": ""
       },
       {
