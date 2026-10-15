@@ -40,9 +40,54 @@ Item {
   // its GUI, so that backend can only hand off. openfortivpn exposes the same
   // login as a flag, so that backend can do the whole thing from the bar.
   readonly property string backendSetting: String(setting("backend", "auto") || "auto")
-  readonly property string unit: String(setting("openfortivpnUnit", "") || "")
-  readonly property string samlUrl: String(setting("samlUrl", "") || "")
   readonly property string browserCommand: String(setting("browserCommand", "") || "omarchy-launch-browser")
+
+  // --- Profiles ---------------------------------------------------------
+  //
+  // A profile is one /etc/openfortivpn/<name>.conf plus the systemd instance
+  // that reads it. They are discovered rather than configured, so a profile
+  // created with setup-openfortivpn appears without editing shell.json.
+  signal profileSelected(string name)
+
+  property var profiles: []
+  readonly property var profileNames: {
+    var names = []
+    for (var i = 0; i < profiles.length; i++) names.push(profiles[i].name)
+    return names
+  }
+
+  // The profile picked from the panel this session. Empty means "whatever the
+  // settings say", so a fresh shell starts on the persisted choice.
+  property string _selectedProfile: ""
+  // Holds the next profile while the tunnel it replaces comes down.
+  property string _pendingProfile: ""
+
+  readonly property string activeProfile: {
+    if (_selectedProfile !== "") return _selectedProfile
+    var configured = String(setting("activeProfile", "") || "")
+    if (configured !== "") return configured
+    // Migrates the single-unit setting this widget had before profiles, so an
+    // existing shell.json keeps working untouched.
+    var legacy = String(setting("openfortivpnUnit", "") || "")
+    if (legacy.indexOf("openfortivpn@") === 0)
+      return legacy.substring("openfortivpn@".length).replace(/\.service$/, "")
+    // One profile needs no choosing.
+    return profiles.length === 1 ? profiles[0].name : ""
+  }
+
+  readonly property string unit: {
+    if (activeProfile !== "") return "openfortivpn@" + activeProfile
+    // A unit named outside the template convention can still be driven.
+    return String(setting("openfortivpnUnit", "") || "")
+  }
+
+  readonly property string samlUrl: {
+    var profile = profileFor(activeProfile)
+    if (profile && profile.samlUrl !== "") return profile.samlUrl
+    // Profiles provisioned before the drop-in carried a URL fall back to the
+    // setting, which is what every single-profile install used to hold.
+    return String(setting("samlUrl", "") || "")
+  }
 
   property bool _unitExists: false
   property bool _checkedUnit: false
@@ -252,6 +297,41 @@ Item {
     else connectViaGui()
   }
 
+  function profileFor(name) {
+    for (var i = 0; i < profiles.length; i++) if (profiles[i].name === name) return profiles[i]
+    return null
+  }
+
+  function listProfiles() {
+    if (listProcess.running) return
+    listProcess.command = ["bash", root.statusScript, "--list"]
+    listProcess.running = true
+  }
+
+  // One ppp route table, one gateway at a time: switching while a tunnel is up
+  // means tearing it down first. The new profile then connects by itself, so a
+  // switch stays one click rather than three.
+  function selectProfile(name) {
+    name = String(name || "")
+    if (name === "" || name === activeProfile || !profileFor(name)) return
+    if (connected || connecting) {
+      _pendingProfile = name
+      disconnect()
+      setActionStatus("Switching to " + name + "…")
+      return
+    }
+    applyProfile(name)
+  }
+
+  function applyProfile(name) {
+    _selectedProfile = name
+    // Discovery already proved this unit exists, so the backend switches
+    // without flickering through FortiClient while a fresh probe runs.
+    _unitExists = true
+    profileSelected(name)
+    refresh()
+  }
+
   function disconnect() {
     if (disconnectProcess.running) return
     _userDisconnecting = true
@@ -326,7 +406,32 @@ Item {
         root.setActionStatus("Disconnect failed")
         root.lastError = String(disconnectStderr.text || root._disconnectError || "").trim()
       }
+      if (root._pendingProfile !== "") {
+        var next = root._pendingProfile
+        root._pendingProfile = ""
+        // A failed stop may have left the old tunnel up; switching anyway would
+        // point the widget at one profile while another still holds the route.
+        if (exitCode === 0) {
+          root.applyProfile(next)
+          root.connect()
+          return
+        }
+      }
       root.refresh()
+    }
+  }
+
+  Process {
+    id: listProcess
+    running: false
+    command: []
+    stdout: StdioCollector { id: listStdout; waitForEnd: true }
+    onExited: function (exitCode) {
+      root.profiles = exitCode === 0 ? Model.parseProfiles(String(listStdout.text || "")) : []
+      // A profile removed from under the widget would otherwise leave it
+      // pointing at a config that is gone, reporting that failure for good.
+      if (root.activeProfile !== "" && root.profiles.length > 0 && !root.profileFor(root.activeProfile))
+        root.applyProfile(root.profiles[0].name)
     }
   }
 
@@ -394,6 +499,15 @@ Item {
     onTriggered: root.actionStatus = ""
   }
 
+  onUnitChanged: {
+    // Discovery can name the unit after the probes already answered, and
+    // availability was settled on that older, unit-less answer.
+    if (unit !== "") {
+      _checkedUnit = false
+      checkAvailability()
+    }
+  }
+
   onBackendChanged: {
     // The two backends report different tunnels; carrying state across would
     // briefly show the other one's.
@@ -401,5 +515,8 @@ Item {
     refresh()
   }
 
-  Component.onCompleted: checkAvailability()
+  Component.onCompleted: {
+    listProfiles()
+    checkAvailability()
+  }
 }
