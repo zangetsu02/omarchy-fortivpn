@@ -1,0 +1,90 @@
+#!/bin/bash
+# Checks the two pieces that are easy to get wrong and invisible when they are:
+# profile discovery, and the parser that reads what discovery prints.
+#
+# Run by hand from the repo root: ./scripts/selftest
+
+set -uo pipefail
+cd "$(dirname "$0")/.."
+
+fail=0
+check() { # check <name> <expected> <actual>
+	if [[ "$2" == "$3" ]]; then
+		printf 'ok   %s\n' "$1"
+	else
+		printf 'FAIL %s\n  expected: %s\n  actual:   %s\n' "$1" "$2" "$3"
+		fail=1
+	fi
+}
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+touch "$tmp/work.conf" "$tmp/acme.conf" "$tmp/config" "$tmp/work-chain.pem"
+
+got="$(OPENFORTIVPN_DIR="$tmp" bash scripts/openfortivpn-status --list | cut -f1 | sort | tr '\n' ' ')"
+check "lists one profile per .conf, and nothing else" "acme work " "$got"
+
+got="$(OPENFORTIVPN_DIR="$tmp/missing" bash scripts/openfortivpn-status --list; printf 'exit=%s' "$?")"
+check "a directory with no profiles is not an error" "exit=0" "$got"
+
+got="$(node -e '
+  var src = require("fs").readFileSync("Model.js", "utf8").replace(".pragma library", "")
+  var api = {}
+  new Function("exports", src + "; exports.parseProfiles = parseProfiles")(api)
+  console.log(JSON.stringify(api.parseProfiles("work\thttps://vpn.example.com/saml\nacme\t\n\n")))
+')"
+check "parses a name with a URL, and one without" \
+	'[{"name":"work","samlUrl":"https://vpn.example.com/saml"},{"name":"acme","samlUrl":""}]' "$got"
+
+# --- new-profile validation ---
+#
+# These values end up as words in a command line, so a hole here is a shell
+# injection, not a cosmetic bug. Each case names what it is defending against.
+run_validation() { # run_validation <name> <gateway> <port>
+	node -e '
+	  var src = require("fs").readFileSync("Model.js", "utf8").replace(".pragma library", "")
+	  var api = {}
+	  new Function("exports", src + "; exports.profileFormError = profileFormError")(api)
+	  console.log(api.profileFormError(process.argv[1], process.argv[2], process.argv[3]))
+	' "$1" "$2" "$3"
+}
+
+check "a plain profile is accepted" "" "$(run_validation work vpn.example.com 10443)"
+check "a dashed name is accepted" "" "$(run_validation acme-vpn vpn.acme.co.uk 443)"
+check "an empty gateway is refused" \
+	"Gateway: a host name, with no scheme and no path." "$(run_validation work "" 10443)"
+check "a name with a semicolon is refused" \
+	"Name: letters, digits, dash and underscore only." "$(run_validation 'work;id' vpn.example.com 10443)"
+check "a gateway with a command substitution is refused" \
+	"Gateway: a host name, with no scheme and no path." "$(run_validation work '$(id)' 10443)"
+check "a gateway given as a URL is refused" \
+	"Gateway: a host name, with no scheme and no path." "$(run_validation work https://vpn.example.com 10443)"
+check "a port out of range is refused" \
+	"Port: a number between 1 and 65535." "$(run_validation work vpn.example.com 70000)"
+check "a non-numeric port is refused" \
+	"Port: a number between 1 and 65535." "$(run_validation work vpn.example.com '443 rm')"
+
+got="$(node -e '
+  var src = require("fs").readFileSync("Model.js", "utf8").replace(".pragma library", "")
+  var api = {}
+  new Function("exports", src + "; exports.gatewayFromSamlUrl = gatewayFromSamlUrl")(api)
+  var url = "https://vpn.example.com:10443/remote/saml/start?redirect=1"
+  console.log(JSON.stringify([api.gatewayFromSamlUrl(url), api.gatewayFromSamlUrl("")]))
+')"
+check "reads the gateway back out of a login URL, and survives none" \
+	'[{"host":"vpn.example.com","port":"10443"},{"host":"","port":""}]' "$got"
+
+# --- removal guards ---
+#
+# The profile name becomes four paths under /etc, so the check that it is a
+# plain name has to happen before anything is built from it.
+got="$(bash scripts/remove-openfortivpn 'work;rm -rf /' 2>&1 | grep -c 'must be alphanumeric')"
+check "a profile name with a semicolon is refused" "1" "$got"
+
+got="$(bash scripts/remove-openfortivpn '../../etc/passwd' 2>&1 | grep -c 'must be alphanumeric')"
+check "a traversing profile name is refused" "1" "$got"
+
+got="$(bash scripts/remove-openfortivpn 2>&1 | grep -c usage)"
+check "no profile named is refused" "1" "$got"
+
+exit "$fail"
