@@ -101,7 +101,7 @@ install -m 600 -D "$tmp/conf" "$conf"
 # --- 3. systemd drop-in -----------------------------------------------------
 
 note "Writing ${dropin_dir}/override.conf"
-cat >"$tmp/override.conf" <<'EOF'
+cat >"$tmp/override.conf" <<EOF
 [Service]
 # A person has to complete an SSO login in a browser, which systemd's default
 # 90 seconds does not allow for.
@@ -110,6 +110,11 @@ TimeoutStartSec=300
 # An automatic restart would silently demand a fresh interactive login, which
 # is not what anyone expects from a service that just died.
 Restart=no
+
+# The profile above is mode 600, so the bar widget cannot read the gateway out
+# of it. Recording the login URL in this world-readable drop-in is what lets
+# the widget open the right page for each profile it discovers.
+Environment=FORTIVPN_SAML_URL=https://${host}:${port}/remote/saml/start?redirect=1
 EOF
 install -m 644 -D "$tmp/override.conf" "${dropin_dir}/override.conf"
 
@@ -148,15 +153,18 @@ systemctl daemon-reload
 
 cat <<EOF
 
-$(note "Done. Add this to the widget entry in ~/.config/omarchy/shell.json:")
+$(note "Done. The widget discovers this profile on its own; nothing to configure.")
+
+If it is not in the bar yet, add the entry to ~/.config/omarchy/shell.json:
 
     {
-      "id": "zangetsu.fortivpn",
-      "openfortivpnUnit": "openfortivpn@${profile}",
-      "samlUrl": "https://${host}:${port}/remote/saml/start?redirect=1"
+      "id": "zangetsu.fortivpn"
     }
 
-Then restart the shell so the widget picks up the new unit:
+With more than one profile installed, pick the active one from the widget's
+panel; the choice is written back here and survives a restart.
+
+Then reload the shell so it sees the new unit:
 
     omarchy restart shell
 
