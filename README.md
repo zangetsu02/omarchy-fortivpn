@@ -75,6 +75,34 @@ under `/etc/openfortivpn` by hand.
 
 Licensed under the MIT License — see [LICENSE](LICENSE).
 
+## What needs root, and what does not
+
+The widget runs as you and never writes to `/etc`. Three things cross a
+privilege boundary, and you see each one happen:
+
+| | |
+|---|---|
+| **Installing openfortivpn** | `sudo pacman -S openfortivpn`, typed by you, once. The plugin never installs or upgrades software. |
+| **Creating or changing a profile** | `setup-openfortivpn` under `sudo`. The panel does not run it: it opens a terminal with the command filled in, so the password and the output stay with you. |
+| **Removing a profile** | `remove-openfortivpn` under `sudo`, the same way, after a confirmation in the panel. |
+
+Connecting and disconnecting need no password, and no root. That is what the
+polkit rule is for, and it is deliberately narrow: **one rule per profile**,
+matching a single systemd unit, four verbs (`start`, `stop`, `restart`,
+`reset-failed`), and only a local active session belonging to the user who ran
+the setup. It grants nothing else, and connecting still requires completing the
+SSO login in a browser.
+
+While running, the widget reads `systemctl is-active`/`show` for its own unit
+and the byte counters under `/sys/class/net`. It starts and stops that one unit
+and nothing else. The only configuration it writes on its own is its entry in
+`~/.config/omarchy/shell.json`, recording which profile you picked.
+
+The name, gateway and port you type become words in a command line, so they are
+checked against strict shapes before they reach a shell —
+`Model.js:profileFormError` and the name check in `remove-openfortivpn`.
+`./scripts/selftest` exercises both with inputs like `work;rm -rf /`.
+
 ## Profiles
 
 A profile is one `/etc/openfortivpn/<name>.conf` and the systemd instance that
