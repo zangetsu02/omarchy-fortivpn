@@ -1,0 +1,61 @@
+#!/bin/bash
+# Removes an openfortivpn profile that setup-openfortivpn created: its config,
+# certificate bundle, systemd drop-in and polkit rule, with the unit stopped
+# first.
+#
+# Usage: sudo remove-openfortivpn <profile>
+#
+# It removes only the files that script writes, and only for the profile named.
+# A drop-in directory holding anything else is left alone rather than emptied.
+
+set -euo pipefail
+
+die() { printf '\033[31merror:\033[0m %s\n' "$*" >&2; exit 1; }
+note() { printf '\033[36m==>\033[0m %s\n' "$*"; }
+
+[[ $# -ge 1 ]] || die "usage: $0 <profile>"
+
+profile="$1"
+
+# Checked before any path is built from it: this name becomes four file paths,
+# and a loose one would reach outside the directories this script owns.
+[[ "$profile" =~ ^[A-Za-z0-9_-]+$ ]] || die "profile name must be alphanumeric, got '$profile'"
+(( EUID == 0 )) || die "run as root (sudo $0 ...)"
+
+unit="openfortivpn@${profile}.service"
+conf="/etc/openfortivpn/${profile}.conf"
+chain="/etc/openfortivpn/${profile}-chain.pem"
+dropin_dir="/etc/systemd/system/${unit}.d"
+rule="/etc/polkit-1/rules.d/49-omarchy-fortivpn-${profile}.rules"
+
+[[ -e "$conf" || -d "$dropin_dir" || -e "$rule" ]] ||
+	die "there is no profile named '${profile}' to remove"
+
+note "Stopping ${unit}"
+systemctl stop "$unit" 2>/dev/null || true
+systemctl reset-failed "$unit" 2>/dev/null || true
+
+for path in "$conf" "$chain" "$rule"; do
+	[[ -e "$path" ]] || continue
+	note "Removing ${path}"
+	rm -f "$path"
+done
+
+if [[ -d "$dropin_dir" ]]; then
+	rm -f "${dropin_dir}/override.conf"
+	if rmdir "$dropin_dir" 2>/dev/null; then
+		note "Removed ${dropin_dir}"
+	else
+		note "${dropin_dir} holds other drop-ins; left in place"
+	fi
+fi
+
+systemctl daemon-reload
+
+cat <<EOF
+
+$(note "Removed the '${profile}' profile.")
+
+The widget drops it from the list the next time its panel is opened.
+
+EOF
