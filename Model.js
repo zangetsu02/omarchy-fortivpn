@@ -99,6 +99,47 @@ function parseStatus(raw) {
   return status
 }
 
+// Profile discovery prints "<name><TAB><saml-url>" per line, because a profile
+// is no more than that: a systemd instance and the login page it belongs to.
+// The URL is empty for a profile set up before the drop-in recorded one.
+function parseProfiles(raw) {
+  var profiles = []
+  var lines = String(raw || "").split("\n")
+  for (var i = 0; i < lines.length; i++) {
+    var line = lines[i].trim()
+    if (line === "") continue
+    var tab = line.indexOf("\t")
+    var name = (tab < 0 ? line : line.substring(0, tab)).trim()
+    if (name === "") continue
+    profiles.push({ name: name, samlUrl: tab < 0 ? "" : line.substring(tab + 1).trim() })
+  }
+  return profiles
+}
+
+// Checks a new profile before its values are handed to a shell. Returns the
+// reason it cannot be used, or "" when it can. The shapes are deliberately
+// narrow: setup-openfortivpn receives these as words in a command line, so
+// anything looser than this would be an injection rather than a typo.
+function profileFormError(name, gateway, port) {
+  if (!/^[A-Za-z0-9_-]+$/.test(String(name || "")))
+    return "Name: letters, digits, dash and underscore only."
+  if (!/^[A-Za-z0-9.-]+$/.test(String(gateway || "")))
+    return "Gateway: a host name, with no scheme and no path."
+  var p = String(port || "")
+  if (!/^[0-9]{1,5}$/.test(p) || parseInt(p, 10) < 1 || parseInt(p, 10) > 65535)
+    return "Port: a number between 1 and 65535."
+  return ""
+}
+
+// The gateway a profile points at, read back out of its recorded login URL.
+// It is the only place the widget can get it from: the config that holds it is
+// root-only, so a profile whose drop-in records no URL reports empty fields.
+function gatewayFromSamlUrl(url) {
+  var match = /^https?:\/\/([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?/.exec(String(url || ""))
+  if (!match) return { host: "", port: "" }
+  return { host: match[1], port: match[2] || "" }
+}
+
 function stateLabel(state) {
   if (state === STATE_CONNECTED) return "Connected"
   if (state === STATE_CONNECTING) return "Connecting…"
